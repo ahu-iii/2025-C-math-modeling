@@ -203,13 +203,12 @@ def test_age(df: pd.DataFrame) -> dict:
                     "p(Tukey校正)": row[3], "显著": row[6],
                 })
         else:
+            age_by_group = dict(zip(GROUP_LABELS, groups))
             pairs = list(itertools.combinations(GROUP_LABELS.keys(), 2))
             raw_p = []
             for g1, g2 in pairs:
                 _, p = stats.mannwhitneyu(
-                    df.loc[df["组别"] == g1, "年龄"].dropna(),
-                    df.loc[df["组别"] == g2, "年龄"].dropna(),
-                    alternative="two-sided",
+                    age_by_group[g1], age_by_group[g2], alternative="two-sided",
                 )
                 raw_p.append(p)
             _, adj_p, _, _ = multipletests(raw_p, alpha=ALPHA, method="bonferroni")
