@@ -12,3 +12,6 @@ wheels/
 # OS / editor
 .DS_Store
 ~$*.docx
+
+# Local Claude Code instructions (not shared to remote)
+CLAUDE.md
