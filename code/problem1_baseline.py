@@ -261,6 +261,41 @@ def plot_age_box(df: pd.DataFrame):
     plt.close(fig)
 
 
+def plot_age_test_pvalues(df: pd.DataFrame):
+    """可视化年龄的正态性(Shapiro)/方差齐性(Levene)/组间差异(ANOVA、Kruskal-Wallis)检验 p 值。
+
+    直接从原始数据重新计算（而非复用 test_age() 中四舍五入到 4 位小数的结果），
+    因为 Shapiro p 值常小至 1e-11 量级，四舍五入后会变成 0.0 而无法在对数坐标上绘制。
+    """
+    groups = [df.loc[df["组别"] == g, "年龄"].dropna().values for g in GROUP_LABELS]
+    shapiro_p = [float(stats.shapiro(g)[1]) if 3 <= len(g) <= 5000 else np.nan for g in groups]
+    _, levene_p = stats.levene(*groups)
+    _, anova_p = stats.f_oneway(*groups)
+    _, kw_p = stats.kruskal(*groups)
+
+    labels = [f"Shapiro\n({label})" for label in GROUP_LABELS.values()]
+    labels += ["Levene", "ANOVA", "Kruskal-\nWallis"]
+    values = shapiro_p + [levene_p, anova_p, kw_p]
+
+    y_min = min(v for v in values if v > 0) / 5
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    colors = ["#788C5D" if v > ALPHA else "#B04A4A" for v in values]
+    bars = ax.bar(labels, values, color=colors)
+    ax.set_yscale("log")
+    ax.set_ylim(y_min, 1)
+    ax.axhline(ALPHA, color="black", linestyle="--", linewidth=1, label=f"α = {ALPHA}", zorder=3)
+    for bar, v in zip(bars, values):
+        label = f"{v:.2e}" if v < 1e-3 else f"{v:.3f}"
+        ax.text(bar.get_x() + bar.get_width() / 2, max(bar.get_height(), y_min) * 1.15,
+                 label, ha="center", va="bottom", fontsize=8)
+    ax.set_ylabel("p 值（对数坐标）")
+    ax.set_title("年龄：正态性/方差齐性/组间差异检验 p 值")
+    ax.legend(loc="center", frameon=False)
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "age_test_pvalues.png", dpi=200)
+    plt.close(fig)
+
+
 def plot_categorical_stack(df: pd.DataFrame, col: str, filename: str, title: str):
     table = pd.crosstab(df["组别标签"], df[col], normalize="index") * 100
     table = table[sorted(table.columns, key=lambda c: (c == "未知", c))]
@@ -378,6 +413,7 @@ def main():
 
     # ---- 图表 ----
     plot_age_box(df)
+    plot_age_test_pvalues(df)
     plot_categorical_stack(df, "婚姻状况", "marital_status_bar.png", "各组婚姻状况分布")
     plot_categorical_stack(df, "既往用药", "prior_use_bar.png", "各组既往抗抑郁药使用情况分布")
     plot_categorical_stack(df, "抑郁程度", "depression_severity_bar.png", "各组初始抑郁程度分布")
