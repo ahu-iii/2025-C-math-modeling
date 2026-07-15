@@ -112,10 +112,14 @@ def build_dataset() -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # 描述性统计 (Table 1)
 # --------------------------------------------------------------------------
+def split_age_by_group(df: pd.DataFrame) -> list[pd.Series]:
+    """按 GROUP_LABELS 顺序拆分各组年龄（已去除缺失值）。"""
+    return [df.loc[df["组别"] == g, "年龄"].dropna() for g in GROUP_LABELS]
+
+
 def summarize_age(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for g, label in GROUP_LABELS.items():
-        s = df.loc[df["组别"] == g, "年龄"].dropna()
+    for (g, label), s in zip(GROUP_LABELS.items(), split_age_by_group(df)):
         rows.append({
             "变量": "年龄", "组别": label, "n(非缺失)": s.shape[0],
             "缺失数": (df["组别"] == g).sum() - s.shape[0],
@@ -143,16 +147,34 @@ def summarize_categorical(df: pd.DataFrame, col: str) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # 假设检验
 # --------------------------------------------------------------------------
-def test_age(df: pd.DataFrame) -> dict:
-    groups = [df.loc[df["组别"] == g, "年龄"].dropna().values for g in GROUP_LABELS]
+def compute_age_diagnostics(groups: list[np.ndarray]) -> dict:
+    """计算年龄的正态性(Shapiro)/方差齐性(Levene)/组间差异(ANOVA、Kruskal-Wallis)检验统计量。
 
-    normal_p = [float(stats.shapiro(g)[1]) if 3 <= len(g) <= 5000 else np.nan for g in groups]
+    返回未四舍五入的原始值：test_age() 据此四舍五入入表，
+    plot_age_test_pvalues() 需要原始精度（Shapiro p 常小至 1e-11 量级，
+    四舍五入后会变成 0.0 而无法在对数坐标上绘制），故两处均调用本函数而非互相复用结果。
+    """
+    shapiro_p = [float(stats.shapiro(g)[1]) if 3 <= len(g) <= 5000 else np.nan for g in groups]
     _, levene_p = stats.levene(*groups)
-    normal_ok = all(p > ALPHA for p in normal_p if not np.isnan(p))
-    variance_ok = levene_p > ALPHA
-
     f_stat, anova_p = stats.f_oneway(*groups)
     h_stat, kw_p = stats.kruskal(*groups)
+    return {
+        "shapiro_p": shapiro_p, "levene_p": levene_p,
+        "f_stat": f_stat, "anova_p": anova_p,
+        "h_stat": h_stat, "kw_p": kw_p,
+    }
+
+
+def test_age(df: pd.DataFrame) -> dict:
+    groups = [s.values for s in split_age_by_group(df)]
+
+    diag = compute_age_diagnostics(groups)
+    normal_p = diag["shapiro_p"]
+    levene_p = diag["levene_p"]
+    f_stat, anova_p = diag["f_stat"], diag["anova_p"]
+    h_stat, kw_p = diag["h_stat"], diag["kw_p"]
+    normal_ok = all(p > ALPHA for p in normal_p if not np.isnan(p))
+    variance_ok = levene_p > ALPHA
 
     recommended = "ANOVA" if (normal_ok and variance_ok) else "Kruskal-Wallis"
     main_p = anova_p if recommended == "ANOVA" else kw_p
@@ -252,7 +274,7 @@ def check_hospital_group_balance(df: pd.DataFrame) -> dict:
 # --------------------------------------------------------------------------
 def plot_age_box(df: pd.DataFrame):
     fig, ax = plt.subplots(figsize=(6, 4.5))
-    data = [df.loc[df["组别"] == g, "年龄"].dropna() for g in GROUP_LABELS]
+    data = split_age_by_group(df)
     ax.boxplot(data, tick_labels=list(GROUP_LABELS.values()), showmeans=True)
     ax.set_ylabel("年龄（岁）")
     ax.set_title("各组年龄分布")
@@ -264,14 +286,13 @@ def plot_age_box(df: pd.DataFrame):
 def plot_age_test_pvalues(df: pd.DataFrame):
     """可视化年龄的正态性(Shapiro)/方差齐性(Levene)/组间差异(ANOVA、Kruskal-Wallis)检验 p 值。
 
-    直接从原始数据重新计算（而非复用 test_age() 中四舍五入到 4 位小数的结果），
-    因为 Shapiro p 值常小至 1e-11 量级，四舍五入后会变成 0.0 而无法在对数坐标上绘制。
+    见 compute_age_diagnostics() 说明：此处需要未四舍五入的原始 p 值。
     """
-    groups = [df.loc[df["组别"] == g, "年龄"].dropna().values for g in GROUP_LABELS]
-    shapiro_p = [float(stats.shapiro(g)[1]) if 3 <= len(g) <= 5000 else np.nan for g in groups]
-    _, levene_p = stats.levene(*groups)
-    _, anova_p = stats.f_oneway(*groups)
-    _, kw_p = stats.kruskal(*groups)
+    groups = [s.values for s in split_age_by_group(df)]
+    diag = compute_age_diagnostics(groups)
+    shapiro_p, levene_p, anova_p, kw_p = (
+        diag["shapiro_p"], diag["levene_p"], diag["anova_p"], diag["kw_p"],
+    )
 
     labels = [f"Shapiro\n({label})" for label in GROUP_LABELS.values()]
     labels += ["Levene", "ANOVA", "Kruskal-\nWallis"]
