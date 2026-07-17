@@ -2,11 +2,12 @@
 问题2：基线因素（婚姻状况、既往用药史、初始抑郁程度）对疗效与主诉的影响。
 
 按药物分层建模（组1=药物C对照 / 组2=药物A / 组3=药物B），题目要求不考虑因素间交互作用，
-故不构建"药物×因素"交互项（组别与药物是同一变量的两套编码、不可同时入模，见 docs/adr/0006）。
-每组单独跑一套回归。
+故主分析不构建“药物×因素”交互项，每组单独跑一套回归。交互项在合并模型中数学上可识别，
+只是未作为本题主分析；分层系数差异因此只作描述，不当作正式效应异质性检验（见 ADR-0006）。
 
 结局变量（从附件2 构造，缺席附件2 的受试者=全程无不适，见 docs/adr/0001、0003、0005）：
-  · 非缓解  D12=1           —— 罕见结局(3.5%-5.3%)，分层后事件少 → Firth 惩罚 Logistic（外加合并模型作锚）
+  · 非缓解  D12=1           —— “第12月仍有不适”的主诉代理结局，不等同临床抑郁未缓解；
+                               事件罕见(3.5%-5.3%) → Firth 惩罚 Logistic（外加合并模型作锚）
   · 任何主诉 任一时点 D_t=1  —— 高发结局(~33%) → 普通 Logistic
   · 总症状负担 ΣB_t          —— 计数结局 → 负二项回归（过离散/零膨胀）
 
@@ -17,7 +18,7 @@
   · 缓解=D12=0（单点，ADR-0003 已定案）；复发仅描述、不进入 Q2 回归（分层后事件过少）。
 
 输出（论文插图与诊断输出的分级见 docs/adr/0011）：
-  output/problem2_or_table.csv     - 各结局×各组 的 OR/IRR + 95%CI + p（长表）
+  output/problem2_or_table.csv     - 各结局×各组 的 OR/IRR + 95%CI + p（含全局与模型内 FDR）
   output/problem2_diagnostics.csv  - 队列核对、各组事件数/EPV、分离(separation)标记、缓解/复发描述率
   output/problem2_severity_table.csv   - 抑郁程度×药物 的观测率 + Wilson CI（图5 底层数值）
   output/problem2_severity_gradient.png - 抑郁程度→结局 的观测梯度（图5）
@@ -236,7 +237,7 @@ def diagnostics(df):
             "非缓解事件数": n_event, "非缓解率%": round(100 * sub["非缓解"].mean(), 1),
             "回归参数数": n_param, "EPV(事件/参数)": round(n_event / n_param, 1),
             "分离风险类别(非缓解=0)": "; ".join(sep) if sep else "无",
-            "缓解率%(D12=0)": round(100 * (1 - sub["非缓解"].mean()), 1),
+            "第12月无主诉率%(代理缓解)": round(100 * (1 - sub["非缓解"].mean()), 1),
             "曾缓解n": int(sub["曾缓解"].sum()), "复发n": int(sub["复发"].sum()),
             "复发率%(/曾缓解)": round(100 * sub["复发"].sum() / sub["曾缓解"].sum(), 1),
         })
@@ -439,6 +440,47 @@ def severity_gradient_table(df):
     return pd.DataFrame(rows)
 
 
+def severity_encoding_sensitivity(df):
+    """合并模型中把抑郁程度改为分类变量，核查有序线性编码是否主导结论。"""
+    X = build_design(df, pooled=True).drop(columns=["抑郁_程度", "抑郁_未知"], errors="ignore")
+    known = df["抑郁程度"].where(df["抑郁程度"].isin(DEP_MAP))
+    dep = pd.get_dummies(known, prefix="抑郁分类").astype(float)
+    dep = dep.drop(columns=["抑郁分类_轻度"], errors="ignore")
+    X["抑郁_未知"] = known.isna().astype(float)
+    X = pd.concat([X, dep], axis=1)
+    Xc = sm.add_constant(X, has_constant="add")
+    res = sm.Logit(df["非缓解"].values, Xc).fit(disp=False, maxiter=300)
+
+    severity_terms = [c for c in Xc.columns if c.startswith("抑郁分类_")]
+    R = np.zeros((len(severity_terms), len(Xc.columns)))
+    for i, term in enumerate(severity_terms):
+        R[i, list(Xc.columns).index(term)] = 1
+    joint = res.wald_test(R, scalar=True)
+    ci = res.conf_int()
+    rows = [{
+        "检验": "抑郁程度分类变量联合Wald",
+        "项": "整体",
+        "OR": "",
+        "CI下": "",
+        "CI上": "",
+        "统计量": round(float(joint.statistic), 4),
+        "df": len(severity_terms),
+        "p": round(float(joint.pvalue), 6),
+    }]
+    for term in severity_terms:
+        rows.append({
+            "检验": "分类编码系数",
+            "项": term.replace("抑郁分类_", "") + " vs 轻度",
+            "OR": round(float(np.exp(res.params[term])), 3),
+            "CI下": round(float(np.exp(ci.loc[term, 0])), 3),
+            "CI上": round(float(np.exp(ci.loc[term, 1])), 3),
+            "统计量": "",
+            "df": 1,
+            "p": round(float(res.pvalues[term]), 6),
+        })
+    return pd.DataFrame(rows)
+
+
 # --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
@@ -461,15 +503,18 @@ def main():
     results += fit_pooled_logit(df, "非缓解")                   # 合并锚（稳定 B 组的脆弱估计）
     res_df = pd.DataFrame(results)
 
-    # Benjamini-Hochberg (FDR) 多重比较校正——与问题1/建模方案§七 口径一致。
-    # 校正族 = 每个回归模型内部的协变量检验（同一 结局×组别×方法 的所有系数）。
-    res_df["p_FDR"] = np.nan
+    # 主口径：对表中全部 86 个系数统一做 BH-FDR，和论文“全部检验”措辞一致。
+    # 同时保留“每个模型内部校正”作为敏感性分析，防止把校正族选择藏起来。
+    res_df["p_FDR_模型内"] = np.nan
     for _, idx in res_df.groupby(["结局", "组别", "方法"]).groups.items():
-        res_df.loc[idx, "p_FDR"] = multipletests(res_df.loc[idx, "p"], method="fdr_bh")[1]
-    res_df["p_FDR"] = res_df["p_FDR"].round(4)
+        res_df.loc[idx, "p_FDR_模型内"] = multipletests(res_df.loc[idx, "p"], method="fdr_bh")[1]
+    res_df["p_FDR_模型内"] = res_df["p_FDR_模型内"].round(4)
+    res_df["显著_模型内FDR"] = res_df["p_FDR_模型内"] < ALPHA
+    res_df["p_FDR"] = multipletests(res_df["p"], method="fdr_bh")[1].round(4)
     res_df["显著_FDR"] = res_df["p_FDR"] < ALPHA
 
     sev = severity_gradient_table(df)
+    sev_sensitivity = severity_encoding_sensitivity(df)
     print("\n=== 抑郁程度 × 药物 的观测率（图5 底层数值）===")
     print(sev.to_string(index=False))
 
@@ -477,9 +522,12 @@ def main():
     res_df.to_csv(out, index=False, encoding="utf-8-sig")
     diag.to_csv(OUT_DIR / "problem2_diagnostics.csv", index=False, encoding="utf-8-sig")
     sev.to_csv(OUT_DIR / "problem2_severity_table.csv", index=False, encoding="utf-8-sig")
+    sev_sensitivity.to_csv(OUT_DIR / "problem2_severity_encoding_sensitivity.csv",
+                           index=False, encoding="utf-8-sig")
     print(f"\n已保存效应量表 -> {out}")
     print(f"已保存诊断表 -> {OUT_DIR / 'problem2_diagnostics.csv'}")
     print(f"已保存梯度表 -> {OUT_DIR / 'problem2_severity_table.csv'}")
+    print(f"已保存抑郁程度编码敏感性 -> {OUT_DIR / 'problem2_severity_encoding_sensitivity.csv'}")
 
     plot_severity_gradient(df)
     plot_remission_forest(res_df)
@@ -487,11 +535,14 @@ def main():
     print(f"已保存图 -> {OUT_DIR}")
 
     sig = res_df[res_df["显著_FDR"]]
-    print(f"\n=== FDR 校正后显著因素（p_FDR<{ALPHA}，共 {len(sig)} 项）===")
+    print(f"\n=== 全部 86 项统一 FDR 校正后显著因素（p_FDR<{ALPHA}，共 {len(sig)} 项）===")
     if not sig.empty:
         show = sig.assign(效应量=[r[r["效应类型"]] for _, r in sig.iterrows()])
         print(show[["结局", "组别", "变量", "效应类型", "效应量", "CI下", "CI上", "p", "p_FDR"]]
               .to_string(index=False))
+    sig_within = res_df[res_df["显著_模型内FDR"]]
+    print(f"\n模型内 FDR 敏感性口径下显著因素：{len(sig_within)} 项；"
+          "该口径仅作对照，不替代全局主口径。")
 
 
 if __name__ == "__main__":
