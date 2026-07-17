@@ -5,4 +5,5 @@ all:
 
 check:
 	$(PYTHON) code/run_all.py
+	$(PYTHON) code/check_paper_numbers.py
 	git diff --exit-code -- output/

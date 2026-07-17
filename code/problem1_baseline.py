@@ -165,6 +165,39 @@ def test_categorical(df: pd.DataFrame, col: str) -> dict:
     }
 
 
+def attribute_marital_unknown(df: pd.DataFrame, marital_table: pd.DataFrame) -> dict:
+    """婚姻状况差异归因：分解"未知"列对主检验卡方值的贡献，剔除该列后复检，
+    并单独检验"是否未知"与组别是否独立（缺失机制）。
+
+    对应 docs/论文初稿.md 附录 C.5；数值需与该处手算结果一致（已由外部核实）。
+    """
+    chi2, p, dof, expected = stats.chi2_contingency(marital_table)
+    contrib = (marital_table.values - expected) ** 2 / expected
+    col_idx = list(marital_table.columns).index("未知")
+    unknown_contrib = contrib[:, col_idx].sum()
+
+    dropped = marital_table.drop(columns="未知")
+    chi2_d, p_d, dof_d, expected_d = stats.chi2_contingency(dropped)
+    n_d = dropped.values.sum()
+    k_d = min(dropped.shape) - 1
+    cramers_v_d = np.sqrt(chi2_d / (n_d * k_d)) if k_d > 0 else np.nan
+
+    missing_table = pd.crosstab(df["组别标签"], df["婚姻状况"] == "未知")
+    chi2_m, p_m, dof_m, _ = stats.chi2_contingency(missing_table)
+
+    return {
+        "检验对象": "婚姻状况：未知列归因",
+        "主分析卡方值": round(chi2, 3), "主分析p值": p,
+        "未知列贡献(绝对值)": round(unknown_contrib, 3),
+        "未知列贡献(占比%)": round(100 * unknown_contrib / chi2, 3),
+        "剔除未知_卡方值": round(chi2_d, 3), "剔除未知_自由度": dof_d,
+        "剔除未知_p值": round(p_d, 4), "剔除未知_Cramer's V": round(cramers_v_d, 3),
+        "缺失机制_卡方值": round(chi2_m, 3), "缺失机制_自由度": dof_m,
+        "缺失机制_p值": p_m,
+        "剔除未知_列联表": dropped, "缺失机制_列联表": missing_table,
+    }
+
+
 def check_hospital_group_balance(df: pd.DataFrame) -> dict:
     """核查医院与组别分配是否独立（应不显著，否则说明分组在两院不均衡）"""
     table = pd.crosstab(df["医院"], df["组别标签"])
@@ -300,6 +333,7 @@ def main():
     marital_test = test_categorical(df, "婚姻状况")
     med_test = test_categorical(df, "既往用药")
     dep_test = test_categorical(df, "抑郁程度")
+    marital_attr = attribute_marital_unknown(df, marital_test["列联表"])
     hosp_balance = check_hospital_group_balance(df)
 
     main_tests = [age_test, marital_test, med_test, dep_test]
@@ -343,6 +377,14 @@ def main():
             f.write(f"\n### {t['检验对象']}：卡方检验详情 ###\n")
             detail = {k: v for k, v in t.items() if k not in ("列联表",)}
             pd.DataFrame([detail]).to_csv(f, index=False)
+
+        f.write("\n### 婚姻状况：未知列归因分析 ###\n")
+        pd.DataFrame([{k: v for k, v in marital_attr.items() if not k.endswith("列联表")}]) \
+            .to_csv(f, index=False)
+        f.write("\n### 婚姻状况：剔除未知后列联表 ###\n")
+        marital_attr["剔除未知_列联表"].to_csv(f)
+        f.write("\n### 婚姻状况：缺失机制列联表(组别×是否未知) ###\n")
+        marital_attr["缺失机制_列联表"].to_csv(f)
 
         f.write("\n### 医院×组别 分配均衡性核查 ###\n")
         hosp_balance["列联表"].to_csv(f)
