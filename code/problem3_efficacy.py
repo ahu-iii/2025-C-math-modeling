@@ -1,25 +1,23 @@
 """
-问题3：三种抗抑郁药物的疗效综合评价。
+问题3：三种抗抑郁药物的不适主诉转归与综合评价。
 
 四层结构（前三层沿用 ADR-0007，综合层按 ADR-0012 改口径，适应期转归层为 ADR-0013 新增）：
 
-  1. 指标层   逐指标组间比较（缓解率/复发率/豁免后持续不适率/自杀倾向率/ΔB/…）+ Wilson CI + BH 校正
-  2. 轨迹层   GEE：P(D_t=1) ~ 药物 + log(时间) + 药物×log(时间)，可交换相关 —— 回答"用药前后变化"
-  3. 适应期转归层  限定 D_1=1 子群的后续转归 + KM/Log-rank —— ADR-0002 适应期规则的正面操作化
-  4. 综合层   TOPSIS：等权为主口径、熵权为敏感性对照 + Dirichlet 单纯形全空间扫描
+  1. 指标层   逐指标组间比较（主诉代理缓解率/复发率/持续不适率/自杀倾向率/ΔB/…）+ Wilson CI + BH 校正
+  2. 轨迹层   GEE：P(D_t=1) ~ 药物 + log(时间) + 药物×log(时间)，可交换相关 —— 回答随访期变化
+  3. 探索性适应期层  D_1=1 子群的后续转归；D_1=1或D_3=1 作定义敏感性
+  4. 综合层   TOPSIS：权重敏感性 + 受试者 bootstrap 抽样不确定性
 
 口径要点（改动前务必先读对应 ADR）：
   · 结局一律基于"不适主诉"而非"抑郁症状" —— 数据中无随访期抑郁测量，代理假设见 ADR-0014。
   · D_t / B_t 定义、失访不计入：ADR-0001、ADR-0005。附件2 去重取并集：ADR-0010。
-  · 缓解 = D12=0（单点）；曾缓解 = D3=0 或 D6=0（宽松）；复发率分母 = 曾缓解人数。
-    三者已定案（open-Q1/Q2/Q3 关闭，见 ADR-0003 / ADR-0004）。**单点判据不是偏好而是约束**：
-    两点判据 D6=D12=0 恰是「豁免后持续不适」(D6=1 或 D12=1) 的逐个体补集（r=−1.0000），
-    会把 X 与 1−X 同时塞进 TOPSIS 的 4 个准则 —— 正是 ADR-0012 剪掉 B12 的那条理由的极端形式。
-    定案依据见 definition_robustness()：12 组口径全跑，B 第一在 12/12 下成立。
+  · “缓解/复发”均是不适主诉代理终点，不是临床抑郁量表终点。主口径保留 D12=0，
+    两点 D6=D12=0 作为定义敏感性；若采用两点口径，综合层须删除与其互补的持续不适指标，
+    不让综合评价模型反过来决定临床定义。
   · 综合层指标集剪枝为 4 项：ΔB 因基线依赖出局（C 的 ΔB 最高仅因 C 的 B_1 最高）、
-    末次负担 B12 因与缓解率同轴重复计数出局、停药率因与持续不适率重叠出局。详见 ADR-0012。
+    末次负担 B12 因与主诉代理缓解率同轴重复计数出局、停药率因与持续不适率重叠出局。
   · 熵权法在 3 备选下失效，不作主口径，仅作对照并在论文中报告其失效。失效的证据不是"权重看着
-    不合理"，而是**熵权的两种通行预处理自相矛盾**：同一指标「缓解率」在原始值口径下权重 0.0011、
+    不合理"，而是**熵权的两种通行预处理自相矛盾**：同一指标「主诉代理缓解率」在原始值口径下权重 0.0011、
     在极差归一口径下 0.4532，相差 423 倍，且 A/C 次序在二者间翻转。故两种口径都实现、都报告。
 
 输出（论文插图与诊断图分级见 ADR-0011）：
@@ -51,7 +49,7 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportion_confint
 
 # 复用三问共用的队列构造：附件1 左连接附件2、附件2 按并集去重、D_t/B_t 构造、中文字体。
-# 三问共用同一份口径，避免各自实现导致缓解率对不上（这正是 ADR-0001 设立的初衷）。
+# 三问共用同一份口径，避免各自实现导致代理终点对不上（这正是 ADR-0001 设立的初衷）。
 from common import ALPHA, DIAG_DIR, OUT_DIR, SUBST, TIMES, build_cohort
 
 warnings.filterwarnings("ignore")
@@ -63,7 +61,7 @@ DRUG_COLORS = {"C": "#5C7CA3", "A": "#D97757", "B": "#788C5D"}
 
 # 综合层指标集（ADR-0012 剪枝后）：方向 True=效益型（越大越好）/ False=成本型（越小越好）
 TOPSIS_INDICATORS = {
-    "缓解率": True,
+    "缓解率（主诉代理）": True,
     "复发率": False,
     "豁免后持续不适率": False,
     "自杀倾向率": False,
@@ -105,7 +103,7 @@ def build_q3_cohort():
 # --------------------------------------------------------------------------
 # (指标名, 分子列, 分母限定列或 None, 是否进综合层)
 RATE_SPECS = [
-    ("缓解率", "缓解", None),
+    ("缓解率（主诉代理）", "缓解", None),
     ("复发率", "复发", "曾缓解"),
     ("豁免后持续不适率", "豁免后持续不适", None),
     ("自杀倾向率", "任一_有自杀倾向", None),
@@ -222,13 +220,16 @@ def fit_gee(long):
 # --------------------------------------------------------------------------
 # 第 3 层：适应期转归层（ADR-0013）
 # --------------------------------------------------------------------------
-def adaptation_cohort(df):
-    """限定第 1 月已出现不适者（D_1=1）—— 即 ADR-0002 适应期规则所指的人群。"""
-    return df[df.D1 == 1].copy()
+def adaptation_cohort(df, include_month3=False):
+    """早期出现不适者；D1=1 为探索性主分析，D1或D3=1 为题面定义敏感性。"""
+    mask = df.D1 == 1
+    if include_month3:
+        mask = mask | (df.D3 == 1)
+    return df[mask].copy()
 
 
 def survival_vars(sub):
-    """首次不适消退的 (时间, 事件) 。
+    """首次观测到无主诉的 (时间, 事件)，不是持续缓解或不可逆康复。
 
     事件 = 首个 D_t=0 的月份（t=3/6/12）；至 12 月仍未消退 → 在 12 月右删失。
     失访单独处理：ADR-0001 规定失访不计入 D_t，故失访者该时点 D_t=0，若直接采信会被
@@ -243,7 +244,7 @@ def survival_vars(sub):
             if r[f"失访@{t}"] == 1:               # 失访 → 就此删失，不再采信其后的 D_t
                 t_end, ev = t, 0
                 break
-            if r[f"D{t}"] == 0:                   # 首次消退
+            if r[f"D{t}"] == 0:                   # 首次观测到无主诉；之后仍可能再次出现主诉
                 t_end, ev = t, 1
                 break
         T.append(t_end)
@@ -252,7 +253,7 @@ def survival_vars(sub):
 
 
 def adaptation_table(sub):
-    """D_1=1 子群：各时点仍不适率 + 组间卡方；始终未消退者比例；Log-rank。"""
+    """早期不适子群：各时点仍不适率、始终有主诉率与首次无主诉 Log-rank。"""
     rows, tests = [], []
     for t in [3, 6, 12]:
         tab = []
@@ -283,7 +284,7 @@ def adaptation_table(sub):
 
     T, E = survival_vars(sub)
     lr = multivariate_logrank_test(T, sub["药"].values, E)
-    tests.append({"检验": "首次消退 Log-rank(3组)", "统计量": round(lr.test_statistic, 3),
+    tests.append({"检验": "首次无主诉 Log-rank(3组)", "统计量": round(lr.test_statistic, 3),
                   "p": round(lr.p_value, 4)})
 
     tests = pd.DataFrame(tests)
@@ -349,7 +350,7 @@ def entropy_weights(M, preprocess="raw"):
     · preprocess="minmax" 先方向统一+极差归一到 [0,1] 再和归一（教科书常见写法）。极差归一
                           会把每列的 min 压成 0（ln 0 未定义），故按惯例做 eps 平移。
 
-    两者在本题给出的权重相差 423 倍（缓解率 0.0011 vs 0.4532），且 A/C 次序翻转 —— 见
+    两者在本题给出的权重相差 423 倍（主诉代理缓解率 0.0011 vs 0.4532），且 A/C 次序翻转 —— 见
     ADR-0012「结果」。原因：n=3 时极差归一必然把 [min, mid, max] 拉伸到 [0, x, 1] 撑满全幅，
     无论原始差异是 2 个百分点还是纯噪声；而原始值口径下 94.66/94.67/96.48 的相对离散度趋近 0。
     同一病根（3 个备选估不出有意义的离散度）的两种相反伪影。
@@ -383,18 +384,58 @@ def weight_space_scan(M, n_draw=20000, seed=0):
     return C, first.reindex(M.index).fillna(0.0)
 
 
+def bootstrap_topsis(df, n_draw=3000, seed=20260717):
+    """按药物分层重抽受试者，量化等权 TOPSIS 对抽样波动的敏感性。"""
+    rng = np.random.default_rng(seed)
+    cols = ["缓解", "复发", "曾缓解", "豁免后持续不适", "任一_有自杀倾向"]
+    parts = {g: df.loc[df.药 == g, cols].to_numpy(float) for g in DRUGS}
+    scores = np.empty((n_draw, len(DRUGS)))
+    weights = np.ones(len(TOPSIS_INDICATORS)) / len(TOPSIS_INDICATORS)
+
+    for i in range(n_draw):
+        rows = []
+        for g in DRUGS:
+            x = parts[g]
+            sample = x[rng.integers(0, len(x), len(x))]
+            ever_n = sample[:, 2].sum()
+            rows.append([sample[:, 0].mean(), sample[:, 1].sum() / ever_n,
+                         sample[:, 3].mean(), sample[:, 4].mean()])
+        M = pd.DataFrame(rows, index=DRUGS, columns=TOPSIS_INDICATORS)
+        scores[i] = topsis(M, weights).reindex(DRUGS).values
+
+    score_df = pd.DataFrame(scores, columns=DRUGS)
+    winners = score_df.idxmax(axis=1).value_counts(normalize=True).reindex(DRUGS).fillna(0)
+    rows = []
+    for g in DRUGS:
+        lo, med, hi = score_df[g].quantile([0.025, 0.5, 0.975])
+        rows.append({"区块": "药物排名", "比较": g,
+                     "排名第一概率%": round(100 * winners[g], 1),
+                     "概率%": "", "中位数": round(med, 4),
+                     "95%下限": round(lo, 4), "95%上限": round(hi, 4),
+                     "说明": f"分层受试者 bootstrap {n_draw} 次；等权 TOPSIS"})
+    for other in ["A", "C"]:
+        diff = score_df["B"] - score_df[other]
+        lo, med, hi = diff.quantile([0.025, 0.5, 0.975])
+        rows.append({"区块": "两两差异", "比较": f"B-{other}",
+                     "排名第一概率%": "", "概率%": round(100 * (diff > 0).mean(), 1),
+                     "中位数": round(med, 4), "95%下限": round(lo, 4),
+                     "95%上限": round(hi, 4),
+                     "说明": f"P(TOPSIS_B > TOPSIS_{other})；区间为分差分位数"})
+    return score_df, pd.DataFrame(rows)
+
+
 def pareto_structure(M):
-    """逐指标两两优劣 —— 全空间扫描结果的**结构性解释**（而非又一次模拟）。
+    """解释固定样本指标矩阵中的逐指标优劣关系。
 
     扫描给出"B 第一占 99.9%、C 占 0.0%"，但没说为什么。原因是支配关系：
 
-      · B 在 4 个指标上**全部**优于 C  → B 优于 C 是**定理**，对任意正权重成立
+      · 当前样本中 B 在 4 个指标上全部优于 C，因此固定该矩阵时，对任意正权重均保持 B>C
         （方向统一后 B 的归一值逐列 ≥ C，故 D+ 更小、D− 更大、贴近度必然更高）。
-        扫描里 C 排第一占 0.0% 不是"四舍五入到 0"，而是恰好为 0 —— 模拟与定理对上了。
+        扫描里 C 排第一占 0.0% 不是四舍五入结果。该性质不代表总体中的统计优效。
       · B 在 3 个指标上优于 A，仅「复发率」输 0.04pp（2.39% vs 2.35%，p=1.0000，纯噪声）
         → 那 0.1% 的反超正是把权重几乎全压在复发率上的组合。
       · A 与 C 的差异**方向相反**：A 的优势在复发率与豁免后持续不适率，C 的优势在自杀倾向率
-        （缓解率上 A 只领先 0.01pp，极差归一后仅值 0.0055，对 A/C 之争几乎不贡献）。
+        （主诉代理缓解率上 A 只领先 0.01pp，极差归一后仅值 0.0055，对 A/C 之争几乎不贡献）。
         故次序取决于"自杀倾向率的权重能否压过另两项之和"——不是数谁赢的项数，而是比归一后的
         加权幅度：等权下 A 的复发率(归一=1.00)+豁免(0.50) 压过 C 的自杀(0.62)；熵权-原始值给
         自杀倾向率 58.6% 权重，C 就反超；留一检验删掉复发率后同样翻成 C>A。三处翻转同一机制。
@@ -426,9 +467,10 @@ def definition_robustness(df, n_draw=5000):
 
     缓解判据 × 曾缓解判据 × 复发率分母 共 12 组口径，逐组重算 3×4 指标矩阵、等权 TOPSIS
     与全空间扫描。定案不是"选了个顺眼的默认"，而是先证明**换哪套口径都不改变结论**，
-    再按结构性理由（见 ADR-0003：两点判据与豁免后持续不适率互补）在其中挑一套。
+    主口径按终点含义和可复核性选择；互补关系用于防止两点口径进入综合层时重复计数。
 
-    注意"两点缓解"行的数值只作敏感性用途，不可当主口径 —— 见 build_q3_cohort 的注释。
+    两点无主诉与“豁免后持续不适率”互为补集；该分支自动删除后者，以免 X 与 1-X
+    同时进入 TOPSIS。不同定义分支因此可能使用 3 或 4 个指标，这是有意的去重处理。
     """
     rem = {"单点 D12=0": lambda d: d.D12 == 0,
            "两点 D6=D12=0": lambda d: (d.D6 == 0) & (d.D12 == 0)}
@@ -446,21 +488,27 @@ def definition_robustness(df, n_draw=5000):
                 for g in DRUGS:
                     s = d[d.药 == g]
                     den = s if q3 == "全体" else s[s["曾缓解"] == 1]
-                    M[g] = {"缓解率": s["缓解"].mean(), "复发率": s["复发"].sum() / len(den),
+                    M[g] = {"缓解率（主诉代理）": s["缓解"].mean(),
+                            "复发率": s["复发"].sum() / len(den),
                             "豁免后持续不适率": s["豁免后持续不适"].mean(),
                             "自杀倾向率": s["任一_有自杀倾向"].mean()}
                 M = pd.DataFrame(M).T[list(TOPSIS_INDICATORS)]
+                dropped = ""
+                if q1.startswith("两点"):
+                    M = M.drop(columns=["豁免后持续不适率"])
+                    dropped = "删除与两点无主诉互补的持续不适指标"
                 C = topsis(M, np.ones(M.shape[1]) / M.shape[1])
                 _, first = weight_space_scan(M, n_draw=n_draw)
                 rows.append({"缓解判据": q1, "曾缓解判据": q2, "复发率分母": q3,
                              "主口径": "★" if (q1.startswith("单点") and q2.startswith("宽松")
                                               and q3 == "曾缓解") else "",
-                             "缓解率C%": round(100 * M.loc["C", "缓解率"], 2),
-                             "缓解率A%": round(100 * M.loc["A", "缓解率"], 2),
-                             "缓解率B%": round(100 * M.loc["B", "缓解率"], 2),
+                             "代理缓解率C%": round(100 * M.loc["C", "缓解率（主诉代理）"], 2),
+                             "代理缓解率A%": round(100 * M.loc["A", "缓解率（主诉代理）"], 2),
+                             "代理缓解率B%": round(100 * M.loc["B", "缓解率（主诉代理）"], 2),
                              "复发率C%": round(100 * M.loc["C", "复发率"], 2),
                              "复发率A%": round(100 * M.loc["A", "复发率"], 2),
                              "复发率B%": round(100 * M.loc["B", "复发率"], 2),
+                             "综合指标数": M.shape[1], "去重处理": dropped,
                              "等权排序": " > ".join(C.sort_values(ascending=False).index),
                              "B全空间第一%": round(100 * first["B"], 1)})
     return pd.DataFrame(rows)
@@ -548,14 +596,14 @@ def plot_trajectory(df, gee_model):
     month_log_axis(ax, TIMES)
     ax.set_xlabel("随访时点（对数坐标）", fontsize=9)
     ax.set_ylabel("该时点出现不适主诉的比例 / %", fontsize=9)
-    ax.set_title("三种药物的不适主诉率随时间的变化\n点=观测率(Wilson 95%CI)；线=GEE 拟合", fontsize=10)
+    ax.set_title("三种药物的不适主诉率在随访期内的变化\n点=观测率(Wilson 95%CI)；线=GEE 拟合", fontsize=10)
     ax.set_ylim(0, 32)
     ax.grid(axis="y", color="#D1CFC5", lw=0.6, alpha=0.6)
     ax.set_axisbelow(True)
     ax.legend(fontsize=8, frameon=False)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    fig.text(0.5, 0.015, "三条轨迹平行下降、误差棒全程重叠：改善由时间驱动，药物间差异未达显著",
+    fig.text(0.5, 0.015, "第1月为首个服药后随访点，并非治疗前基线；三条轨迹的药物间差异未达显著",
              ha="center", fontsize=7, color="#87867F")
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(OUT_DIR / "problem3_trajectory.png", dpi=200)
@@ -595,21 +643,21 @@ def plot_adaptation_trajectory(sub, logrank_p, p12):
                     elinewidth=1.2, color=DRUG_COLORS[g], label=DRUG_LABEL[g], zorder=3)
 
     ax.axvspan(6, 12, color="#F0EEE6", zorder=0)                  # 高亮信号出现的区间
-    ax.annotate(f"三线在此扇形张开\nA 掉队（第 12 月 χ² p={p12:.4f}）",
+    ax.annotate(f"探索性信号在此张开\n第 12 月 χ² p={p12:.4f}",
                 xy=(8.5, 34), fontsize=7.5, color="#87867F", ha="center")
     month_log_axis(ax, pts)
     ax.set_xlabel("随访时点（对数坐标）", fontsize=9)
     ax.set_ylabel("该时点仍有不适的比例 / %", fontsize=9)
-    ax.set_title("第 1 月即出现不适者（D₁=1，n=835）的后续转归\n"
+    ax.set_title(f"探索性分析：第 1 月即出现不适者（D₁=1，n={len(sub)}）的后续转归\n"
                  "三组按定义均自第 1 月的 100% 出发；"
-                 f"首次消退 Log-rank p = {logrank_p:.4f}", fontsize=10)
+                 f"首次无主诉 Log-rank p = {logrank_p:.4f}", fontsize=10)
     ax.set_ylim(0, 50)
     ax.grid(axis="y", color="#D1CFC5", lw=0.6, alpha=0.6)
     ax.set_axisbelow(True)
     ax.legend(fontsize=8, frameon=False, loc="upper right")
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    fig.text(0.5, 0.015, "与图8（全队列三线平行）对照：条件于「早期已出现不适」后，药物差异才显现",
+    fig.text(0.5, 0.015, "D₁为治疗后变量，本图只作探索性子群证据；D₁或D₃定义另作敏感性核查",
              ha="center", fontsize=7, color="#87867F")
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(OUT_DIR / "problem3_adaptation_trajectory.png", dpi=200)
@@ -617,7 +665,7 @@ def plot_adaptation_trajectory(sub, logrank_p, p12):
 
 
 def plot_adaptation_km_diag(sub, logrank_p):
-    """诊断图：D_1=1 子群首次消退的 KM 曲线（不入论文，见 plot_adaptation_trajectory 的说明）。
+    """诊断图：D_1=1 子群首次观测到无主诉的 KM 曲线（不入论文）。
 
     留作自查：核对 Log-rank 的删失处理是否如预期（失访者在其失访时点离开风险集）。
     """
@@ -631,7 +679,7 @@ def plot_adaptation_km_diag(sub, logrank_p):
                                    ci_alpha=0.12)
     ax.set_xlabel("月")
     ax.set_ylabel("不适仍未消退的比例（KM）")
-    ax.set_title(f"诊断：D₁=1 子群首次消退 KM\nLog-rank p={logrank_p:.4f}；"
+    ax.set_title(f"诊断：D₁=1 子群首次观测到无主诉 KM\nLog-rank p={logrank_p:.4f}；"
                  "第 12 月的陡降=末次观测的事件与删失同时发生", fontsize=9)
     ax.set_xticks([0, 3, 6, 12])
     ax.legend(fontsize=7, frameon=False)
@@ -643,7 +691,7 @@ def plot_adaptation_km_diag(sub, logrank_p):
 # --------------------------------------------------------------------------
 # 图10：权重敏感性（论文插图）
 # --------------------------------------------------------------------------
-def plot_weight_sensitivity(C_scan, C_eq, C_en, C_mm, first, index):
+def plot_weight_sensitivity(C_scan, C_eq, C_en, C_mm, first, index, bootstrap_summary):
     """权重全空间下 TOPSIS 贴近度的分布。
 
     承载的论证：正文"B 的第一名对权重稳健，而 A 与 C 的次序随权重方案翻转、不可区分"
@@ -680,8 +728,8 @@ def plot_weight_sensitivity(C_scan, C_eq, C_en, C_mm, first, index):
     ax.set_yticklabels([f"{DRUG_LABEL[g]}\n排名第一 {100 * first[g]:.1f}%" for g in order],
                        fontsize=8)
     ax.set_xlabel("TOPSIS 贴近度 $C_i$（越大越优）", fontsize=9)
-    ax.set_title("排名对权重的敏感性：权重单纯形上均匀采样 20000 组权重\n"
-                 "小提琴=贴近度的全空间分布；圆点=等权，空心菱形/方块=熵权的两种预处理", fontsize=10)
+    ax.set_title("固定样本下的权重敏感性（不等同于抽样置信度）\n"
+                 "小提琴=20000组权重下的贴近度；圆点=等权，空心菱形/方块=两种熵权", fontsize=10)
     ax.set_xlim(-0.03, 1.15)                                     # 右侧留白安放图例，避免压住 B 的分布
     ax.grid(axis="x", color="#D1CFC5", lw=0.6, alpha=0.6)
     ax.set_axisbelow(True)
@@ -690,9 +738,14 @@ def plot_weight_sensitivity(C_scan, C_eq, C_en, C_mm, first, index):
               edgecolor="#D1CFC5")
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
+    b_first = bootstrap_summary.loc[
+        (bootstrap_summary["区块"] == "药物排名") & (bootstrap_summary["比较"] == "B"),
+        "排名第一概率%"].iloc[0]
+    p_ba = bootstrap_summary.loc[bootstrap_summary["比较"] == "B-A", "概率%"].iloc[0]
+    p_bc = bootstrap_summary.loc[bootstrap_summary["比较"] == "B-C", "概率%"].iloc[0]
     fig.text(0.5, 0.015,
-             f"B 的分布几乎整条压在 A/C 之上（A 仅在 {100 * first['A']:.1f}% 的权重组合下反超）→ B 第一稳健；"
-             "A 与 C 的分布大面积重叠 → 二者不可区分",
+             f"权重扫描：B第一 {100 * first['B']:.1f}%；受试者bootstrap：B第一 {b_first}%，"
+             f"P(B>A)={p_ba}%，P(B>C)={p_bc}% → 排名有一致倾向，但仍含抽样不确定性",
              ha="center", fontsize=7, color="#87867F")
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(OUT_DIR / "problem3_weight_sensitivity.png", dpi=200)
@@ -755,16 +808,23 @@ def main():
     # ---- 第 3 层：适应期转归层 ----
     sub = adaptation_cohort(df)
     adapt_rates, adapt_tests = adaptation_table(sub)
-    print(f"\n=== 第3层 适应期转归层：D₁=1 子群 n={len(sub)} "
+    print(f"\n=== 第3层 探索性适应期转归层：D₁=1 子群 n={len(sub)} "
           f"（{sub['药'].value_counts().reindex(DRUGS).to_dict()}）===")
     print(adapt_rates.pivot_table(index="指标", columns="药", values="率%", sort=False)
           .reindex(columns=DRUGS).to_string())
     print("\n=== 适应期转归层 检验（BH 校正）===")
     print(adapt_tests.to_string(index=False))
+    sub_broad = adaptation_cohort(df, include_month3=True)
+    adapt_rates_broad, adapt_tests_broad = adaptation_table(sub_broad)
+    print(f"\n=== 定义敏感性：D₁=1 或 D₃=1 子群 n={len(sub_broad)} ===")
+    print(adapt_rates_broad.pivot_table(index="指标", columns="药", values="率%", sort=False)
+          .reindex(columns=DRUGS).to_string())
+    print(adapt_tests_broad.to_string(index=False))
 
     # ---- 第 4 层：综合层 ----
     M = indicator_matrix(df)
     topsis_df, C_eq, C_en, C_mm, C_scan, first, W_eq, W_en, W_mm, b_dom_c = topsis_report(M)
+    _, bootstrap_summary = bootstrap_topsis(df)
     print("\n=== 第4层 综合层：指标矩阵（%）===")
     print((M * 100).round(2).to_string())
     print("\n=== 权重（熵权的两种通行预处理并列，其分歧本身是主要证据）===")
@@ -778,6 +838,8 @@ def main():
     print(topsis_df[topsis_df["区块"] == "留一稳健性(等权)"][["项", "备注"]].to_string(index=False))
     print("\n=== 支配关系（解释扫描为何是 99.9/0.1/0.0）===")
     print(topsis_df[topsis_df["区块"] == "两两支配"][["项", "值", "备注"]].to_string(index=False))
+    print("\n=== 受试者 bootstrap：等权 TOPSIS 的抽样不确定性 ===")
+    print(bootstrap_summary.to_string(index=False))
 
     # ---- 口径稳健性：open-Q1/Q2/Q3 定案依据（ADR-0003/0004）----
     defs = definition_robustness(df)
@@ -786,7 +848,7 @@ def main():
     n_b_first = int((defs["等权排序"].str[0] == "B").sum())
     print(f"→ B 排第一：{n_b_first}/{len(defs)} 组口径；B 全空间第一比例 "
           f"{defs['B全空间第一%'].min():.1f}%–{defs['B全空间第一%'].max():.1f}% "
-          f"→ 结论对三处口径均不敏感，open-Q1/Q2/Q3 据此定案")
+          f"→ 当前样本排名方向对三处定义不敏感（不含抽样误差）")
 
     # ---- 输出 ----
     rates_out = pd.concat([rates.assign(层="指标层"),
@@ -794,16 +856,25 @@ def main():
     rates_out.to_csv(OUT_DIR / "problem3_indicators.csv", index=False, encoding="utf-8-sig")
     pd.concat([rate_tests.assign(层="指标层"), adapt_tests.assign(层="适应期转归层")]) \
         .to_csv(OUT_DIR / "problem3_adaptation.csv", index=False, encoding="utf-8-sig")
+    pd.concat([
+        adapt_rates.assign(区块="率", 子群="D₁=1（探索性主分析）"),
+        adapt_tests.assign(区块="检验", 子群="D₁=1（探索性主分析）"),
+        adapt_rates_broad.assign(区块="率", 子群="D₁=1或D₃=1（定义敏感性）"),
+        adapt_tests_broad.assign(区块="检验", 子群="D₁=1或D₃=1（定义敏感性）"),
+    ], ignore_index=True, sort=False).to_csv(
+        OUT_DIR / "problem3_adaptation_sensitivity.csv", index=False, encoding="utf-8-sig")
     pd.concat([gee_coef.assign(区块="系数"), gee_tests.assign(区块="检验")]) \
         .to_csv(OUT_DIR / "problem3_gee.csv", index=False, encoding="utf-8-sig")
     topsis_df.to_csv(OUT_DIR / "problem3_topsis.csv", index=False, encoding="utf-8-sig")
+    bootstrap_summary.to_csv(OUT_DIR / "problem3_topsis_bootstrap.csv",
+                             index=False, encoding="utf-8-sig")
     defs.to_csv(OUT_DIR / "problem3_definition_robustness.csv", index=False, encoding="utf-8-sig")
 
     logrank_p = float(adapt_tests.loc[adapt_tests["检验"].str.contains("Log-rank"), "p"].iloc[0])
     p_d12 = float(adapt_tests.loc[adapt_tests["检验"] == "第12月仍不适率 卡方(3组)", "p"].iloc[0])
     plot_trajectory(df, gee_model)
     plot_adaptation_trajectory(sub, logrank_p, p_d12)
-    plot_weight_sensitivity(C_scan, C_eq, C_en, C_mm, first, M.index)
+    plot_weight_sensitivity(C_scan, C_eq, C_en, C_mm, first, M.index, bootstrap_summary)
     plot_gee_fit_check(df, gee_model)
     plot_adaptation_km_diag(sub, logrank_p)
     print(f"\n已保存表 -> {OUT_DIR}/problem3_*.csv")
@@ -827,16 +898,22 @@ def main():
     # 翻转是这一点在 TOPSIS 上的表现。二者必须分清 —— 在两点缓解判据下翻转会消失，
     # 但 A/C 依旧不显著、结论不变；若把论据挂在翻转上，那里就会错误地"升格"出 A>C。
     print(f"2. 综合：各方案排序 —— 等权 {rank_eq}；熵权-原始值 {rank_en}；熵权-极差归一 {rank_mm}")
-    print(f"   熵权失效：同一指标「缓解率」在熵权的两种通行预处理下权重相差 {swing:.0f} 倍 "
+    print(f"   熵权失效：同一指标「主诉代理缓解率」在熵权的两种通行预处理下权重相差 {swing:.0f} 倍 "
           f"（{W_en[0]:.4f} vs {W_mm[0]:.4f}）→ n=3 下熵权无信号可提取，不作主口径")
     print(f"   权重全空间扫描：B 第一占 {100 * first['B']:.1f}%、A 占 {100 * first['A']:.1f}%、"
           f"C 占 {100 * first['C']:.1f}%")
-    print(f"   结构性解释：B 在全部 4 指标上优于 C{'（Pareto 支配 → B>C 对任意权重成立，故 C 恰为 0.0%）' if b_dom_c else ''}；"
+    print(f"   固定样本解释：B 在全部 4 指标上优于 C{'（当前矩阵中对任意正权重均为 B>C；不代表总体优效）' if b_dom_c else ''}；"
           "B 仅在「复发率」输 A 0.04pp(p=1.0000) → 那 0.1% 即权重几乎全压复发率的组合")
-    print("   → 结论口径（ADR-0012）：B 优于 A 和 C（对权重稳健）；A 与 C 不可区分、并列。不报全序。")
-    print(f"3. 适应期转归：D₁=1 子群第 12 月仍不适 "
+    b_boot = bootstrap_summary.loc[
+        (bootstrap_summary["区块"] == "药物排名") & (bootstrap_summary["比较"] == "B"),
+        "排名第一概率%"].iloc[0]
+    p_ba = bootstrap_summary.loc[bootstrap_summary["比较"] == "B-A", "概率%"].iloc[0]
+    p_bc = bootstrap_summary.loc[bootstrap_summary["比较"] == "B-C", "概率%"].iloc[0]
+    print(f"   抽样不确定性：受试者bootstrap下 B 第一 {b_boot}%，P(B>A)={p_ba}%，P(B>C)={p_bc}%")
+    print("   → 结论口径：B 在所选指标下呈较一致排名优势，但不写成已证实优效；A/C 不给确定次序。")
+    print(f"3. 探索性适应期转归：D₁=1 子群第 12 月仍不适 "
           f"{{{', '.join(f'{g}:{100 * sub[sub.药 == g].D12.mean():.1f}%' for g in DRUGS)}}}，"
-          f"卡方 p={p_d12:.4f}")
+          f"卡方 p={p_d12:.4f}；后验且条件化于治疗后变量，不作因果解释")
 
 
 if __name__ == "__main__":
