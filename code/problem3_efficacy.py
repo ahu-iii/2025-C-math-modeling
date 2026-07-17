@@ -36,9 +36,7 @@
   output/diagnostics/problem3_adaptation_km.png  - 诊断：KM 曲线（退化成 3 级阶梯，不入论文）
 """
 
-import sys
 import warnings
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -52,23 +50,12 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportion_confint
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-# 复用问题2 的队列构造：附件1 左连接附件2、附件2 按并集去重、D_t/B_t 构造、中文字体。
+# 复用三问共用的队列构造：附件1 左连接附件2、附件2 按并集去重、D_t/B_t 构造、中文字体。
 # 三问共用同一份口径，避免各自实现导致缓解率对不上（这正是 ADR-0001 设立的初衷）。
-from problem2_factors import (  # noqa: E402
-    OUT_DIR,
-    SUBST,
-    TIMES,
-    build_cohort,
-)
+from common import ALPHA, DIAG_DIR, OUT_DIR, SUBST, TIMES, build_cohort
 
 warnings.filterwarnings("ignore")
 
-DIAG_DIR = OUT_DIR / "diagnostics"
-DIAG_DIR.mkdir(parents=True, exist_ok=True)
-
-ALPHA = 0.05
 DRUGS = ["C", "A", "B"]                      # 固定展示顺序：对照在前
 DRUG_OF_GROUP = {1: "C", 2: "A", 3: "B"}
 DRUG_LABEL = {"C": "C（对照药）", "A": "A（新药）", "B": "B（新药）"}
@@ -99,23 +86,13 @@ def month_log_axis(ax, pts):
 # 队列：在问题2 的基础上补问题3 专用的派生变量
 # --------------------------------------------------------------------------
 def build_q3_cohort():
-    """问题2 队列 + 问题3 派生变量。返回 (df, meta)。"""
+    """问题2 队列 + 问题3 派生变量。返回 (df, meta)。
+
+    D_t/B_t、缓解/曾缓解/复发/任何主诉、适应期/豁免后持续不适均已由 common.build_cohort()
+    统一构造（ADR-0001/0002/0003/0004/0005），此处只补问题3 专用的"药"/ΔB/单症状标记。
+    """
     df, meta = build_cohort()
     df["药"] = df["组别"].map(DRUG_OF_GROUP)
-
-    # 适应期（ADR-0002）：前期(1或3月)有不适，但后期(6且12月)均无 → 视为已适应，前三月不计入药物质量问题
-    df["适应期"] = (((df.D1 == 1) | (df.D3 == 1)) & (df.D6 == 0) & (df.D12 == 0)).astype(int)
-    # 豁免后持续不适：把适应期个体豁免掉之后，仍构成"药物质量问题"的人 —— 即后期(6或12月)仍有不适
-    df["豁免后持续不适"] = ((df.D6 == 1) | (df.D12 == 1)).astype(int)
-
-    # 缓解：单点 D12=0（ADR-0003 定案）。不可改用两点 D6=D12=0 —— 那恰是上面「豁免后持续不适」
-    # 的补集，两者会在综合层里变成同一根轴的正反两面（见模块 docstring 与 ADR-0003）。
-    df["缓解"] = (df.D12 == 0).astype(int)
-    # 曾缓解：宽松 D3=0 或 D6=0（ADR-0004 定案）。与缓解同为"单时点无不适"判据，只是看更早的窗口；
-    # 严格版（仅 D6=0）会对"曾缓解"用比"缓解"本身更严的尺子，无依据。
-    df["曾缓解"] = ((df.D3 == 0) | (df.D6 == 0)).astype(int)
-    df["复发"] = ((df["曾缓解"] == 1) & (df.D12 == 1)).astype(int)
-    df["任何主诉"] = df[[f"D{t}" for t in TIMES]].max(axis=1)
     df["ΔB"] = df["B1"] - df["B12"]                           # 描述性；不进综合层（ADR-0012）
 
     for s in SUBST + ["失访"]:                                # 各症状"任一时点是否出现"

@@ -1,8 +1,7 @@
 """复现流水线：按顺序运行三个问题的脚本。
 
-注意：problem3 会 import problem2 作为模块，因此顺序必须是
-problem1 -> problem2 -> problem3；这里用一个显式的有序列表即可，
-不需要额外的依赖图。
+三个脚本互不 import，也不读取彼此的输出文件，因此顺序不是正确性要求；
+按 problem1 -> problem2 -> problem3 排列只是为了输出顺序符合直觉。
 """
 import subprocess
 import sys

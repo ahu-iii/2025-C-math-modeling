@@ -14,9 +14,7 @@
 
 import itertools
 import warnings
-from pathlib import Path
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -24,93 +22,17 @@ from scipy import stats
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from statsmodels.stats.multitest import multipletests
 
+from common import ALPHA, DIAG_DIR, GROUP_LABELS, OUT_DIR, load_baseline
+
 warnings.filterwarnings("ignore")
-
-# --------------------------------------------------------------------------
-# 路径与常量
-# --------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parent.parent
-DATA_FILE = ROOT / "附件1：两个院临床受试者及抑郁症的基本数据.xlsx"
-OUT_DIR = ROOT / "output"
-OUT_DIR.mkdir(exist_ok=True)
-
-# 论文插图出 OUT_DIR，诊断图（自查用、不入论文）出 DIAG_DIR。
-# 准入检验见 docs/adr/0011-出图规范论文插图与诊断图分离.md。
-DIAG_DIR = OUT_DIR / "diagnostics"
-DIAG_DIR.mkdir(exist_ok=True)
-
-GROUP_LABELS = {1: "组1-药物C(对照)", 2: "组2-药物A", 3: "组3-药物B"}
-ALPHA = 0.05
-
-COL_NAMES = [
-    "序号", "组别", "年龄",
-    "未婚", "已婚", "离异", "丧偶",
-    "无用药史", "使用过抗抑郁药", "其它用药史",
-    "轻度", "中度", "重度",
-]
-
-# --------------------------------------------------------------------------
-# 中文字体（macOS 系统自带，避免图中出现方框）
-# --------------------------------------------------------------------------
-def setup_cjk_font():
-    candidates = [
-        "/System/Library/Fonts/Supplemental/Heiti SC.ttc",  # 可能不存在, 保留兜底
-        "/System/Library/Fonts/Supplemental/STHeiti Light.ttc",
-        "/System/Library/Fonts/Supplemental/Songti.ttc",
-    ]
-    for path in candidates:
-        p = Path(path)
-        if p.exists():
-            matplotlib.font_manager.fontManager.addfont(str(p))
-            name = matplotlib.font_manager.FontProperties(fname=str(p)).get_name()
-            plt.rcParams["font.sans-serif"] = [name]
-            plt.rcParams["axes.unicode_minus"] = False
-            return
-    warnings.warn("未找到中文字体，图中文字可能显示为方框。")
-
-
-setup_cjk_font()
 
 
 # --------------------------------------------------------------------------
 # 数据加载与整理
 # --------------------------------------------------------------------------
-def load_hospital_sheet(sheet_name: str, hospital_label: str) -> pd.DataFrame:
-    df = pd.read_excel(
-        DATA_FILE, sheet_name=sheet_name, header=None, skiprows=2,
-        usecols=range(len(COL_NAMES)), names=COL_NAMES,
-    )
-    df = df.dropna(how="all")
-    onehot_cols = COL_NAMES[3:]  # 婚姻/用药史/抑郁程度的 one-hot 列，个别单元格含空字符串而非真 NaN
-    df[onehot_cols] = df[onehot_cols].apply(pd.to_numeric, errors="coerce")
-    df["医院"] = hospital_label
-    return df
-
-
-def onehot_to_category(df: pd.DataFrame, cols: list[str], out_name: str) -> pd.Series:
-    """将一组 one-hot 列坍缩为单个分类变量；全空记为'未知'（缺失/失访）。"""
-    sub = df[cols]
-    has_any = sub.eq(1).any(axis=1)
-    cat = sub.fillna(0).idxmax(axis=1)   # 取值为1的列名；全空时任意选一列，随后被覆盖
-    cat = cat.where(has_any, other="未知")
-    cat.name = out_name
-    return cat
-
-
 def build_dataset() -> pd.DataFrame:
-    d1 = load_hospital_sheet("一院临床受试者及抑郁症的基本数据", "一院")
-    d2 = load_hospital_sheet("二院临床受试者及抑郁症的基本数据", "二院")
-    df = pd.concat([d1, d2], ignore_index=True)
-
-    df["组别"] = df["组别"].astype(int)
+    df = load_baseline()
     df["组别标签"] = df["组别"].map(GROUP_LABELS)
-
-    df["婚姻状况"] = onehot_to_category(df, ["未婚", "已婚", "离异", "丧偶"], "婚姻状况")
-    df["既往用药"] = onehot_to_category(
-        df, ["无用药史", "使用过抗抑郁药", "其它用药史"], "既往用药"
-    )
-    df["抑郁程度"] = onehot_to_category(df, ["轻度", "中度", "重度"], "抑郁程度")
-
     return df[["序号", "医院", "组别", "组别标签", "年龄", "婚姻状况", "既往用药", "抑郁程度"]]
 
 
