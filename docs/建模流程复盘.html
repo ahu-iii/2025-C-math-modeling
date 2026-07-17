@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>建模流程复盘与 5 处改进</title>
+<style>
+  *, *::before, *::after { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body, h1, h2, h3, p, ol, ul, figure, table { margin:0; padding:0; }
+  ol, ul { list-style:none; }
+  table { border-spacing:0; }
+  img, svg { max-width:100%; }
+
+  :root {
+    --ivory:#FAF9F5; --paper:#FFFFFF; --slate:#141413; --clay:#D97757; --clay-d:#C7684C;
+    --oat:#E3DACC; --olive:#788C5D;
+    --g100:#F0EEE6; --g300:#D1CFC5; --g500:#87867F; --g700:#3D3D3A;
+    --success:#788C5D; --warning:#C78E3F; --danger:#B04A4A; --info:#5C7CA3;
+
+    --ground:var(--ivory); --surface:var(--paper); --ink:var(--slate);
+    --ink-2:var(--g700); --ink-3:var(--g500); --line:var(--g300); --fill:var(--g100);
+
+    --serif: ui-serif, Georgia, "Times New Roman", Times, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px; --sp-8:64px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:#141413; --surface:#1D1D1B; --ink:#FAF9F5;
+      --ink-2:#D6D3CA; --ink-3:#8F8E86; --line:#35342F; --fill:#232320;
+      --oat:#3A362E;
+      --success:#8DA271; --warning:#D6A055; --danger:#C86A6A; --info:#7495BC;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#141413; --surface:#1D1D1B; --ink:#FAF9F5;
+    --ink-2:#D6D3CA; --ink-3:#8F8E86; --line:#35342F; --fill:#232320;
+    --oat:#3A362E;
+    --success:#8DA271; --warning:#D6A055; --danger:#C86A6A; --info:#7495BC;
+  }
+  :root[data-theme="light"] {
+    --ground:#FAF9F5; --surface:#FFFFFF; --ink:#141413;
+    --ink-2:#3D3D3A; --ink-3:#87867F; --line:#D1CFC5; --fill:#F0EEE6;
+    --oat:#E3DACC;
+    --success:#788C5D; --warning:#C78E3F; --danger:#B04A4A; --info:#5C7CA3;
+  }
+
+  body {
+    background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:820px; margin:0 auto; padding:var(--sp-7) var(--sp-5) var(--sp-8); }
+
+  .eyebrow {
+    font-family:var(--mono); font-size:12px; font-weight:500; line-height:1.4;
+    text-transform:uppercase; letter-spacing:.1em; color:var(--ink-3);
+    display:flex; align-items:center; gap:var(--sp-3);
+  }
+  .eyebrow::before { content:""; width:24px; height:1.5px; background:var(--clay); flex:none; }
+
+  h1 {
+    font-family:var(--serif); font-size:44px; line-height:1.1; font-weight:500;
+    letter-spacing:-.02em; text-wrap:balance; margin-top:var(--sp-4);
+  }
+  h2 {
+    font-family:var(--serif); font-size:26px; line-height:1.3; font-weight:500;
+    letter-spacing:-.01em; text-wrap:balance;
+  }
+  h3 { font-family:var(--serif); font-size:20px; line-height:1.35; font-weight:500; text-wrap:balance; }
+  p { max-width:65ch; }
+  a { color:var(--clay); text-decoration-thickness:1px; text-underline-offset:2px; }
+  a:focus-visible, summary:focus-visible {
+    outline:none; border-radius:4px;
+    box-shadow:0 0 0 3px rgba(217,119,87,.25);
+  }
+  code {
+    font-family:var(--mono); font-size:.87em; background:var(--fill);
+    border:1px solid var(--line); border-radius:4px; padding:1px 5px;
+    word-break:break-word;
+  }
+  strong { font-weight:650; }
+
+  .lede { font-size:18px; line-height:1.6; color:var(--ink-2); margin-top:var(--sp-4); }
+  .lede strong { color:var(--ink); }
+
+  .facts {
+    display:flex; flex-wrap:wrap; gap:var(--sp-2) var(--sp-5);
+    margin-top:var(--sp-5); padding-top:var(--sp-4);
+    border-top:1.5px solid var(--line);
+    font-family:var(--mono); font-size:12px; color:var(--ink-3);
+    font-variant-numeric:tabular-nums; text-transform:uppercase; letter-spacing:.06em;
+  }
+  .facts b { color:var(--ink); font-weight:500; }
+
+  section { margin-top:var(--sp-8); display:flex; flex-direction:column; gap:var(--sp-4); }
+
+  .figure {
+    background:var(--surface); border:1.5px solid var(--line); border-radius:12px;
+    padding:var(--sp-5); overflow-x:auto;
+  }
+  .figure svg { display:block; min-width:640px; width:100%; height:auto; }
+  .caption {
+    font-family:var(--mono); font-size:12px; line-height:1.5; color:var(--ink-3);
+    margin-top:var(--sp-3); max-width:none;
+  }
+
+  .note {
+    background:var(--fill); border:1.5px solid var(--line);
+    border-left:3px solid var(--clay); border-radius:8px;
+    padding:var(--sp-4) var(--sp-5);
+  }
+  .note p { margin:0; }
+  .note p + p { margin-top:var(--sp-3); }
+
+  ol.items { list-style:none; display:flex; flex-direction:column; gap:var(--sp-5); margin-top:var(--sp-2); }
+
+  .item {
+    background:var(--surface); border:1.5px solid var(--line); border-radius:12px;
+    padding:var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-4);
+    border-left-width:4px; border-left-style:solid;
+  }
+  .item.s1 { border-left-color:var(--danger); }
+  .item.s2 { border-left-color:var(--danger); }
+  .item.s3 { border-left-color:var(--warning); }
+  .item.s4 { border-left-color:var(--info); }
+  .item.s5 { border-left-color:var(--g500); }
+
+  .item-head { display:flex; flex-direction:column; gap:var(--sp-3); }
+  .item-meta { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+  .rank {
+    font-family:var(--mono); font-size:12px; font-weight:500; color:var(--ink-3);
+    letter-spacing:.08em; font-variant-numeric:tabular-nums;
+  }
+  .chip {
+    font-family:var(--mono); font-size:11px; font-weight:500; line-height:1;
+    text-transform:uppercase; letter-spacing:.08em;
+    padding:5px 10px; border-radius:999px;
+  }
+  .chip.s1, .chip.s2 { background:rgba(176,74,74,.14); color:var(--danger); }
+  .chip.s3 { background:rgba(199,142,63,.16); color:var(--warning); }
+  .chip.s4 { background:rgba(92,124,163,.14); color:var(--info); }
+  .chip.s5 { background:rgba(135,134,127,.16); color:var(--ink-3); }
+  .item h3 { margin:0; }
+
+  .block { display:flex; flex-direction:column; gap:var(--sp-2); }
+  .block > .label {
+    font-family:var(--mono); font-size:11px; font-weight:500;
+    text-transform:uppercase; letter-spacing:.1em; color:var(--ink-3);
+  }
+  .block p { margin:0; }
+
+  ul.eviq { list-style:none; display:flex; flex-direction:column; gap:var(--sp-2); }
+  ul.eviq li {
+    display:flex; gap:var(--sp-3); align-items:baseline;
+    font-size:14.5px; line-height:1.5; color:var(--ink-2);
+  }
+  ul.eviq li::before {
+    content:""; flex:none; width:5px; height:5px; border-radius:50%;
+    background:var(--line); transform:translateY(-2px);
+  }
+
+  .tablewrap { overflow-x:auto; border:1.5px solid var(--line); border-radius:8px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; min-width:460px; }
+  th, td {
+    text-align:left; padding:var(--sp-3) var(--sp-4);
+    border-bottom:1px solid var(--line); vertical-align:top;
+  }
+  thead th {
+    font-family:var(--mono); font-size:11px; font-weight:500; color:var(--ink-3);
+    text-transform:uppercase; letter-spacing:.08em; background:var(--fill);
+  }
+  tbody tr:last-child td { border-bottom:none; }
+  td code { background:transparent; border:none; padding:0; }
+  .num { font-variant-numeric:tabular-nums; }
+
+  .fix { background:var(--fill); border-radius:8px; padding:var(--sp-4); }
+  .fix .label { color:var(--clay); }
+
+  footer {
+    margin-top:var(--sp-8); padding-top:var(--sp-5); border-top:1.5px solid var(--line);
+    font-family:var(--mono); font-size:12px; line-height:1.6; color:var(--ink-3);
+  }
+
+  @media (max-width:640px) {
+    h1 { font-size:34px; }
+    h2 { font-size:22px; }
+    .wrap { padding:var(--sp-6) var(--sp-4) var(--sp-7); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">复盘 · 2025 MCM/ICM C 题</div>
+    <h1>建模是怎么做成的，以及 5 处能提高产出与一致性的地方</h1>
+    <p class="lede">
+      流程的骨架没问题，网格验证那一招也确实好用。真正的毛病是<strong>口径没有唯一出处，同一套定义散在三个脚本里</strong>。
+      建模方案早就写了"写入代码常量，避免口径不一致"，代码到现在还没照做。下面 5 条按严重程度从高到低排。
+    </p>
+    <div class="facts">
+      <span><b>1,925</b> 行代码 / 3 脚本</span>
+      <span><b>14</b> 份 ADR</span>
+      <span><b>24</b> 个产出文件入库</span>
+      <span><b>1,112</b> 行论文初稿</span>
+      <span><b>0</b> 个 issue</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="eyebrow">第一部分</div>
+    <h2>我们是怎么完成建模的</h2>
+    <p>
+      从 git 历史和文档结构反推，实际走的是"先定义、后计算"。这不是事后补的说法：
+      每次代码提交都跟着对应的 ADR 变更。
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 660 232" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">建模流程链路图</title>
+        <desc id="flow-desc">从建模方案总纲出发，经过 ADR 定案与待决问题清单，落到代码常量，产出 output 表图，最后汇入论文初稿；网格验证形成一条从待决问题回到 ADR 的反馈回路。</desc>
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#87867F"/>
+          </marker>
+          <marker id="ar-clay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#D97757"/>
+          </marker>
+        </defs>
+
+        <g font-family="ui-monospace, Menlo, monospace" font-size="11" font-weight="500">
+          <rect x="8" y="70" width="112" height="52" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="64" y="90" text-anchor="middle" fill="var(--ink)">建模方案.md</text>
+          <text x="64" y="107" text-anchor="middle" fill="var(--ink-3)" font-size="10">方法总纲</text>
+
+          <rect x="160" y="70" width="112" height="52" rx="9" fill="var(--surface)" stroke="var(--clay)" stroke-width="2"/>
+          <text x="216" y="90" text-anchor="middle" fill="var(--ink)">docs/adr/</text>
+          <text x="216" y="107" text-anchor="middle" fill="var(--ink-3)" font-size="10">14 份定案</text>
+
+          <rect x="160" y="8" width="112" height="44" rx="9" fill="var(--fill)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="216" y="26" text-anchor="middle" fill="var(--ink)">待决问题</text>
+          <text x="216" y="41" text-anchor="middle" fill="var(--ink-3)" font-size="10">尚余 4 条</text>
+
+          <rect x="312" y="70" width="112" height="52" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="368" y="90" text-anchor="middle" fill="var(--ink)">code/*.py</text>
+          <text x="368" y="107" text-anchor="middle" fill="var(--ink-3)" font-size="10">口径→常量</text>
+
+          <rect x="464" y="70" width="112" height="52" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="520" y="90" text-anchor="middle" fill="var(--ink)">output/</text>
+          <text x="520" y="107" text-anchor="middle" fill="var(--ink-3)" font-size="10">24 表 / 图</text>
+
+          <rect x="464" y="160" width="112" height="52" rx="9" fill="var(--oat)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="520" y="180" text-anchor="middle" fill="var(--ink)">论文初稿.md</text>
+          <text x="520" y="197" text-anchor="middle" fill="var(--ink-3)" font-size="10">手工誊抄</text>
+
+          <rect x="312" y="160" width="112" height="52" rx="9" fill="var(--surface)" stroke="var(--olive)" stroke-width="2"/>
+          <text x="368" y="180" text-anchor="middle" fill="var(--ink)">口径网格</text>
+          <text x="368" y="197" text-anchor="middle" fill="var(--ink-3)" font-size="10">12 组全跑</text>
+        </g>
+
+        <g fill="none" stroke="#87867F" stroke-width="1.5" marker-end="url(#ar)">
+          <path d="M 120 96 L 154 96"/>
+          <path d="M 272 96 L 306 96"/>
+          <path d="M 424 96 L 458 96"/>
+          <path d="M 520 122 L 520 154"/>
+        </g>
+
+        <g fill="none" stroke="var(--olive)" stroke-width="1.5" marker-end="url(#ar)">
+          <path d="M 368 122 L 368 154"/>
+        </g>
+        <g fill="none" stroke="var(--clay)" stroke-width="2" marker-end="url(#ar-clay)" stroke-dasharray="5 4">
+          <path d="M 312 186 L 216 186 L 216 128"/>
+        </g>
+        <g fill="none" stroke="#87867F" stroke-width="1.5" marker-end="url(#ar)">
+          <path d="M 216 52 L 216 64"/>
+        </g>
+
+        <g font-family="ui-monospace, Menlo, monospace" font-size="10" fill="var(--clay)">
+          <text x="232" y="152">网格证明"换口径不改结论" → 争议降级成说明</text>
+        </g>
+      </svg>
+      <p class="caption">
+        实线 = 主链路；绿线 = 用代码验证定义；橙色虚线 = 网格验证回路，下面第三条讲。
+        右下角的"论文初稿"是全图唯一靠人手连接的环节。
+      </p>
+    </div>
+
+    <h3>做得对的三件事</h3>
+    <p>
+      <strong>一、定义先于代码。</strong> 建模方案第二节先把"不适 / 适应期 / 缓解 / 复发 / 症状负担"定成可操作的判据，
+      再落到 ADR，最后才写代码。问题 2 和问题 3 的结论因此能对得上，不是各算各的。
+    </p>
+    <p>
+      <strong>二、否定掉的方案留了记录。</strong> 14 份 ADR 分"已定案""部分已弃用""待定"三种状态，
+      0007 的综合层就是被 0012 取代的。熵权法失效没有被悄悄删掉，而是留作敏感性对照，并在论文里写清楚失效原因：
+      同一个"缓解率"指标，在两种通行预处理下权重差了 423 倍（0.0011 vs 0.4532）。留着比藏起来划算。
+    </p>
+    <p>
+      <strong>三、把判断题改成了计算题。</strong> 这一招值得复用，但它现在只是
+      <code>docs/建模待决问题.md</code> 使用提醒里的一条脚注：
+    </p>
+
+    <div class="note">
+      <p>
+        缓解判据、曾缓解判据、复发率分母这三条，原本当成"靠讨论共识解决、不靠算法解决"的判断题，
+        队伍一放假就卡住了。实际做法是把 2×3×2 = 12 组口径全部重跑一遍
+        （<code>problem3_efficacy.py::definition_robustness()</code>），结果 <strong>B 排第一在 12 组里全部成立</strong>，
+        权重全空间第一比例 97.9% 到 100.0%。换哪套口径只影响数值，不影响结论。
+      </p>
+      <p>
+        需要拍板的争议就此降成了需要说明的选择，最后按结构性理由挑定一套：两点判据与"豁免后持续不适"互为补集，
+        r = −1.0000，会破坏 TOPSIS 的准则正交性。先跑网格再讨论，这个顺序应该写成默认协议，
+        别等下次卡住了才想起来。
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">第二部分 · 按严重度排序</div>
+    <h2>5 处能提高产出效率与一致性的地方</h2>
+
+    <ol class="items">
+
+      <li class="item s1">
+        <div class="item-head">
+          <div class="item-meta">
+            <span class="rank">01</span>
+            <span class="chip s1">要命 · 一致性</span>
+          </div>
+          <h3>口径没有唯一出处：缺一个 <code>code/common.py</code></h3>
+        </div>
+
+        <div class="block">
+          <span class="label">现状</span>
+          <p>
+            <code>建模方案.md</code> 第八节执行清单第 1 条自己写着："敲定第二节的操作性定义，写入代码常量，避免口径不一致。"
+            要求提了，代码结构没跟上。三个脚本各写各的，唯一的共享方式是 P3 直接 import P2。
+          </p>
+        </div>
+
+        <div class="block">
+          <span class="label">证据</span>
+          <ul class="eviq">
+            <li>同样三种药，代码里有 <strong>4 套标签字典</strong>：<code>GROUP_LABELS</code>（P1:42，"组1-药物C(对照)"）、
+              <code>GROUPS</code>（P2:54，"药物C(对照)"）、<code>GROUP_SHORT</code>（P2:363）、<code>GROUP_LEGEND</code>（P2:496）。P1 和 P2 的键值对不上。</li>
+            <li><code>onehot_to_category()</code> 在 P1:91 和 P2:91 各写了一遍。P2 那份的 docstring 记了一个边界情形：
+              "3/3149 受试者同一组内命中 &gt;1 个 one-hot（录入笔误）"，P1 那份没记。
+              同一个数据坑，只有一半的代码知道。</li>
+            <li><code>setup_cjk_font()</code> 复制了两份，字体候选列表也各写一遍。</li>
+            <li>P3 用 <code>from problem2_factors import build_cohort, OUT_DIR, SUBST, TIMES</code> 复用队列构造。
+              想法没错，但 P2 是个带副作用的可执行脚本：import 它会触发模块级的
+              <code>setup_cjk_font()</code>（P2:85）和 <code>OUT_DIR.mkdir()</code>（P2:52），顺带把 P2 的全部绘图代码拖进来。</li>
+          </ul>
+        </div>
+
+        <div class="block">
+          <span class="label">影响</span>
+          <p>
+            问题 4 是整合题，要同时吃问题 2 和问题 3 的结果，那就只能再 import 一次 P2，把这个畸形依赖坐实。
+            更现实的风险是：4 条待决问题一旦定案（比如抑郁程度改哑变量编码），改动点散在哪几个文件里，谁也说不准。
+          </p>
+        </div>
+
+        <div class="fix block">
+          <span class="label">怎么做</span>
+          <p>
+            抽一个 <code>code/common.py</code>：路径、药物标签（只留一套）、附件列名、字体、<code>onehot_to_category</code>、
+            <code>load_baseline</code>、<code>load_followup</code>、<code>build_cohort</code>，
+            还有 ADR 钉死的定义常量（D_t / 缓解 / 曾缓解 / 适应期 / 豁免后持续不适）。
+            P1 到 P4 一律 <code>from common import ...</code>，脚本之间互不 import。
+            这是纯机械重构，产出必须逐字节不变，正好拿现有的 24 个产物文件当回归基线。
+          </p>
+        </div>
+      </li>
+
+      <li class="item s2">
+        <div class="item-head">
+          <div class="item-meta">
+            <span class="rank">02</span>
+            <span class="chip s2">要命 · 可复现</span>
+          </div>
+          <h3>没法一键重跑，也就没法确认产物是不是当前代码跑出来的</h3>
+        </div>
+
+        <div class="block">
+          <span class="label">现状</span>
+          <p>
+            没有 Makefile，也没有 <code>run_all.py</code>。24 个 CSV / PNG 提交进了 git，但仓库里没有任何东西
+            能回答"这些数字是不是今天这份代码跑出来的"。
+          </p>
+        </div>
+
+        <div class="block">
+          <span class="label">影响</span>
+          <p>
+            队友复工后 clone 下来，只能靠猜脚本的执行顺序，P3 依赖 P2 的模块这件事没有任何地方声明过。
+            更麻烦的是静默失配：改了 P2 的口径又忘了重跑 P3，<code>problem3_topsis.csv</code> 就还是旧的，
+            而论文引用的正是它，整个过程不会有任何报错。
+          </p>
+        </div>
+
+        <div class="fix block">
+          <span class="label">怎么做</span>
+          <p>
+            一个 <code>Makefile</code>（或 <code>run_all.py</code>）按 P1 → P2 → P3 → P4 全跑一遍，把依赖关系写成显式的。
+            再加一个 <code>make check</code>：跑到临时目录，然后 diff 已入库的产物，不一致就非零退出。
+            队友重跑之后要么逐字节相同，要么拿到一份清晰的 diff，这是保证一致性最省事的办法。
+          </p>
+        </div>
+      </li>
+
+      <li class="item s3">
+        <div class="item-head">
+          <div class="item-meta">
+            <span class="rank">03</span>
+            <span class="chip s3">重要 · 效率</span>
+          </div>
+          <h3>论文里的每个数字都是手抄的</h3>
+        </div>
+
+        <div class="block">
+          <span class="label">现状</span>
+          <p>
+            <code>论文初稿.md</code> 有 1,112 行，里面的 <code>OR=2.07</code>、<code>χ²=152.871</code>、
+            <code>p=0.0033</code>、<code>91.5%</code>、<code>r=−1.0000</code> 全是从 <code>output/*.csv</code> 人工誊抄过来的常量。
+            上面那张图里，这是唯一一条没有代码连接的边。
+          </p>
+        </div>
+
+        <div class="block">
+          <span class="label">影响</span>
+          <p>
+            剩下 4 条待决问题（第 5、8、9、10 条）<strong>全部属于问题 2</strong>：抑郁程度用有序还是哑变量、
+            婚姻"未知"类别怎么处理、要不要补交互检验。任何一条定案，P2 的 OR 表都会变，
+            然后得有人在 1,112 行里手工找齐每一处引用。漏掉一处，论文里就有两个互相打架的数字，
+            而评委恰好会核对表格和正文。
+          </p>
+        </div>
+
+        <div class="fix block">
+          <span class="label">怎么做</span>
+          <p>
+            不用上模板引擎。最小可用的做法：每个脚本额外吐一份 <code>output/*_claims.csv</code>，记下可被论文引用的数字并配稳定 key；
+            再写一个 <code>check_paper_numbers.py</code>，把初稿里形如 <code>OR=…</code> / <code>p=…</code> / <code>χ²=…</code>
+            的数字全抓出来，逐个核对能不能在 claims 表里找到，对不上就报错并指出行号。
+            半小时的脚本，省掉每次改口径后的全文手工复查。
+          </p>
+        </div>
+      </li>
+
+      <li class="item s4">
+        <div class="item-head">
+          <div class="item-meta">
+            <span class="rank">04</span>
+            <span class="chip s4">中等 · 一致性</span>
+          </div>
+          <h3>ADR 和代码之间只有注释，没有断言；总纲靠警告框打补丁</h3>
+        </div>
+
+        <div class="block">
+          <span class="label">现状</span>
+          <p>
+            代码注释大量引用 ADR（"见 ADR-0003""不可改用两点判据"），写得很好。但这层链接只是单向的散文：
+            谁要把 <code>df["缓解"] = (df.D12 == 0)</code> 改成两点判据，不会有任何东西失败。
+            ADR 不会变红，测试根本不存在，产物默默换一批新数字。
+          </p>
+        </div>
+
+        <div class="block">
+          <span class="label">证据</span>
+          <ul class="eviq">
+            <li>ADR 里已经写死了一批可以直接断言的事实：互补性 r = −1.0000、两率相加恒为 100.00%、
+              附件2 汇总栏 == 7 类症状之和（四时点零误差）、B 排第一 12/12。
+              文档已经把它们当事实陈述了，只是没写成 <code>assert</code>，改起来几乎不要成本。</li>
+            <li><code>建模方案.md</code> 第 5.3 节的正文<strong>现在是错的</strong>：它写着"熵权法（客观赋权）+ TOPSIS"，
+              靠上面压一个警告框写"本节已被 ADR-0012 取代、勿按本节原文实现"来纠正。
+              被取代的原文该收进 ADR-0007，那本来就是 ADR 的用途，而不是留在总纲正文里等人读到。</li>
+          </ul>
+        </div>
+
+        <div class="fix block">
+          <span class="label">怎么做</span>
+          <p>
+            写一个 <code>code/test_definitions.py</code>，把 ADR 声明的不变量逐条断言，十几行就够，不需要测试框架，
+            挂在 <code>make check</code> 里跑。这样 ADR 就不只是描述过去的决定，还能守住当下的代码。
+            另外把第 5.3 节按现口径重写，警告框里的决策背景移进 ADR-0007。
+          </p>
+        </div>
+      </li>
+
+      <li class="item s5">
+        <div class="item-head">
+          <div class="item-meta">
+            <span class="rank">05</span>
+            <span class="chip s5">细微 · 协作</span>
+          </div>
+          <h3>协作约定写好了，但没人用</h3>
+        </div>
+
+        <div class="block">
+          <span class="label">现状</span>
+          <p>
+            <code>CLAUDE.md</code> 指向 <code>docs/agents/issue-tracker.md</code> 和 <code>triage-labels.md</code>，
+            规定了一整套 issue 驱动加分诊标签的协作约定。仓库里的实际状态是这样：
+          </p>
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr><th>约定</th><th>文档要求</th><th>仓库实际</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>GitHub Issues</td><td>任务的权威来源</td><td class="num"><strong>0 个</strong>（含已关闭）</td></tr>
+                <tr><td><code>needs-triage</code></td><td>规范标签</td><td>未创建</td></tr>
+                <tr><td><code>needs-info</code></td><td>规范标签</td><td>未创建</td></tr>
+                <tr><td><code>ready-for-agent</code></td><td>规范标签</td><td>未创建</td></tr>
+                <tr><td><code>ready-for-human</code></td><td>规范标签</td><td>未创建</td></tr>
+                <tr><td>待决问题</td><td>未规定</td><td>躺在 markdown 里，共 4 条</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="block">
+          <span class="label">影响</span>
+          <p>
+            方案第九节把分工写得很清楚：非编程队友负责文献理由、结果解读和"模型建立"章节。
+            但 git 历史显示只有一条车道在跑，代码、文档、论文出自同一批提交。
+            4 条待决问题的"谁需拍板"栏全写着"全队"，而它们躺在一份 400 行的 markdown 里，
+            没有任何东西会去通知谁。队友复工第一件事是重读全文，而不是打开一个待办队列。
+          </p>
+        </div>
+
+        <div class="fix block">
+          <span class="label">怎么做</span>
+          <p>
+            把第 5、8、9、10 条各开一个 issue，打上 <code>ready-for-human</code>，标签先建出来。
+            权衡理由已经写好了，直接搬过去，每条 issue 就是一个读完就能拍板的单元。
+            顺带把第一部分那条网格协议写进 <code>docs/agents/</code>：卡住的判断题，先跑网格证明结论对口径不敏感，再挑一套并说明理由。
+            这一招在缓解判据、曾缓解判据、复发率分母上都用过，值得定成默认动作。
+          </p>
+        </div>
+      </li>
+
+    </ol>
+  </section>
+
+  <section>
+    <div class="eyebrow">如果只做一件</div>
+    <h2>先抽 <code>common.py</code>，再加 <code>make check</code></h2>
+    <p>
+      01 和 02 得一起做：抽公共模块会动到全部三个脚本，而<strong>能证明重构没改数值的只有一件事，就是重跑产物逐字节相同</strong>。
+      所以先把校验建起来再动刀，拿现有的 24 个产物当基线。这两条做完，03、04、05 的成本都会降下来，
+      论文数字核对、ADR 断言、issue 队列都挂在同一条 <code>make check</code> 上。
+    </p>
+  </section>
+
+  <footer>
+    依据：git 历史 13 次提交 · code/ 1,925 行 · docs/adr/ 14 份 · docs/建模待决问题.md · output/ 24 个入库文件 · gh issue/label 实况
+  </footer>
+
+</div>
+
+</body>
+</html>
